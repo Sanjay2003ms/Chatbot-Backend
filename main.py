@@ -2,17 +2,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from langchain_groq import ChatGroq
-from langchain.prompts import PromptTemplate
-from langchain.chains import ConversationChain
-from langchain.chains.conversation.memory import ConversationBufferWindowMemory
 import uuid
 from datetime import datetime
 import os
 import sqlite3
-import os
 
-app = FastAPI(title="Groq Chatbot API", version="1.0.0")
+app = FastAPI(title="Custom Chatbot API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,9 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-# SQLite database setup
 DB_PATH = "chatbot.db"
 
 def init_db():
@@ -52,7 +44,6 @@ def init_db():
 
 init_db()
 
-# Pydantic models
 class ChatMessage(BaseModel):
     human: str
     ai: str
@@ -95,31 +86,19 @@ class UserSessionsResponse(BaseModel):
 
 def get_custom_prompt(persona: str):
     personas = {
-        'Default': """You are a friendly and helpful AI assistant, providing clear, concise, and accurate responses. 
-                      Focus on being approachable and ensuring the user feels understood and supported.
-                      Current conversation: 
-                      {history} 
-                      Human: {input}
-                      AI:""",
-        'Expert': """You are a highly knowledgeable and authoritative expert across various fields. 
-                     Offer in-depth, precise, and technical explanations, citing examples or relevant research when necessary. 
-                     Avoid jargon when possible, but feel free to introduce advanced concepts where appropriate. 
-                     Current conversation: 
-                     {history} 
-                     Human: {input}
-                     Expert:""",
-        'Creative': """You are an imaginative and inventive AI with a flair for creative problem-solving and thinking outside the box. 
-                       Use metaphors, vivid descriptions, and unconventional ideas to inspire and captivate the user. 
-                       Feel free to suggest unique approaches or surprising solutions to problems.
-                       Current conversation: 
-                       {history} 
-                       Human: {input}
-                       Creative AI:"""
+        'Default': "You are a helpful assistant. Human: {input} AI:",
+        'Expert': "You are an expert. Human: {input} Expert:",
+        'Creative': "You are a creative thinker. Human: {input} Creative AI:"
     }
-    return PromptTemplate(
-        input_variables=['history', 'input'],
-        template=personas.get(persona, personas['Default'])
-    )
+    return personas.get(persona, personas['Default'])
+
+def custom_chatbot_response(prompt: str, history: List[tuple], user_input: str) -> str:
+    # A placeholder AI logic (replace with your actual LLM call)
+    return f"You said: {user_input}"
+
+@app.get("/")
+async def home():
+    return {"message": "CHATBOT BACKEND"}
 
 @app.post("/api/chat/send", response_model=SendMessageResponse)
 async def send_message(request: SendMessageRequest):
@@ -136,34 +115,25 @@ async def send_message(request: SendMessageRequest):
                          (session_id, user_email, f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}", datetime.now()))
             conn.commit()
 
-        groq_chat = ChatGroq(
-            groq_api_key=GROQ_API_KEY,
-            model_name=request.model
-        )
-        memory = ConversationBufferWindowMemory(k=request.memory_length)
+        history = []
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT human, ai FROM messages WHERE session_id = ? ORDER BY timestamp", (session_id,))
-            for human, ai in c.fetchall():
-                memory.save_context({'input': human}, {'output': ai})
+            history = c.fetchall()
 
-        conversation = ConversationChain(
-            llm=groq_chat,
-            memory=memory,
-            prompt=get_custom_prompt(request.persona)
-        )
-        response = conversation(request.message)
+        prompt_template = get_custom_prompt(request.persona)
+        ai_response = custom_chatbot_response(prompt_template, history, request.message)
 
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("INSERT INTO messages (session_id, human, ai, timestamp) VALUES (?, ?, ?, ?)",
-                     (session_id, request.message, response['response'], datetime.now()))
+                     (session_id, request.message, ai_response, datetime.now()))
             c.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,))
             message_count = c.fetchone()[0]
             conn.commit()
 
         return SendMessageResponse(
-            response=response['response'],
+            response=ai_response,
             session_id=session_id,
             message_count=message_count
         )
@@ -208,7 +178,7 @@ async def clear_session(request: ClearSessionRequest):
 
 @app.delete("/api/chat/memory/{session_id}")
 async def clear_memory_only(session_id: str):
-    return {"message": "Memory cleared successfully"}  # Memory is now handled in-memory per request
+    return {"message": "Memory cleared successfully"}
 
 @app.get("/api/models")
 async def get_available_models():
