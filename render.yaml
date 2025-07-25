@@ -3,9 +3,12 @@ services:
     name: chatbot-backend
     env: python
     buildCommand: |
-      apt-get update && apt-get install -y curl build-essential pkg-config libssl-dev
       curl https://sh.rustup.rs -sSf | sh -s -- -y
       source $HOME/.cargo/env
+      export CARGO_HOME=$HOME/.cargo
+      export RUSTUP_HOME=$HOME/.rustup
+      pip install --upgrade pip
+      pip install maturin
       pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
