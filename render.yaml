@@ -2,8 +2,11 @@ services:
   - type: web
     name: chatbot-backend
     env: python
+    runtime: python-3.11
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
-      - key: PORT
-        value: 10000
+      - key: PYTHON_VERSION
+        value: 3.11
+    autoDeploy: true
+
