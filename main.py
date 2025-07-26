@@ -100,6 +100,11 @@ def custom_chatbot_response(prompt: str, history: List[tuple], user_input: str) 
 async def home():
     return {"message": "CHATBOT BACKEND"}
 
+@app.get("/healthz")
+async def health_check():
+    return {"status": "ok"}
+
+
 @app.post("/api/chat/send", response_model=SendMessageResponse)
 async def send_message(request: SendMessageRequest):
     try:
