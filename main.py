@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import uvicorn
 import sqlite3
+import openai
 
 app = FastAPI(title="Custom Chatbot API", version="1.0.0")
 
@@ -19,6 +20,22 @@ app.add_middleware(
 )
 
 DB_PATH = "chatbot.db"
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+if GROQ_API_KEY == "" or len(GROQ_API_KEY) < 6:
+    raise RuntimeError("Could not get the groq api key. \n Check enviroment variables")
+
+
+try:
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY
+    )
+except Exception as e:
+    raise RuntimeError("Could not create openai client " + str(e))
+
+
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -85,17 +102,26 @@ class UserSession(BaseModel):
 class UserSessionsResponse(BaseModel):
     sessions: List[UserSession]
 
-def get_custom_prompt(persona: str):
+def get_custom_prompt(persona: str) -> str:
     personas = {
-        'Default': "You are a helpful assistant. Human: {input} AI:",
-        'Expert': "You are an expert. Human: {input} Expert:",
-        'Creative': "You are a creative thinker. Human: {input} Creative AI:"
+        'Default': (
+            "You are a friendly and helpful AI assistant, providing clear, concise, and accurate responses. "
+            "Focus on being approachable and ensuring the user feels understood and supported."
+        ),
+        'Expert': (
+            "You are a highly knowledgeable and authoritative expert across various fields. "
+            "Offer in-depth, precise, and technical explanations, citing examples or relevant research when necessary. "
+            "Avoid jargon when possible, but feel free to introduce advanced concepts where appropriate."
+        ),
+        'Creative': (
+            "You are an imaginative and inventive AI with a flair for creative problem-solving and thinking outside the box. "
+            "Use metaphors, vivid descriptions, and unconventional ideas to inspire and captivate the user. "
+            "Feel free to suggest unique approaches or surprising solutions to problems."
+        )
     }
     return personas.get(persona, personas['Default'])
 
-def custom_chatbot_response(prompt: str, history: List[tuple], user_input: str) -> str:
-    # A placeholder AI logic (replace with your actual LLM call)
-    return f"You said: {user_input}"
+
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
@@ -112,6 +138,7 @@ async def send_message(request: SendMessageRequest):
         session_id = request.session_id
         user_email = request.user_email
 
+        # ✅ Store session if needed
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("INSERT OR IGNORE INTO users (email) VALUES (?)", (user_email,))
@@ -121,30 +148,51 @@ async def send_message(request: SendMessageRequest):
                          (session_id, user_email, f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}", datetime.now()))
             conn.commit()
 
-        history = []
+        # ✅ Build conversation history (memory-like behavior)
+        messages = []
+        system_prompt = get_custom_prompt(request.persona)
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT human, ai FROM messages WHERE session_id = ? ORDER BY timestamp", (session_id,))
             history = c.fetchall()
+            for human, ai in history[-request.memory_length:]:
+                messages.append({"role": "user", "content": human})
+                messages.append({"role": "assistant", "content": ai})
 
-        prompt_template = get_custom_prompt(request.persona)
-        ai_response = custom_chatbot_response(prompt_template, history, request.message)
+        # ✅ Add current message
+        messages.append({"role": "user", "content": request.message})
 
+        # ✅ Call Groq API using OpenAI client
+        chat_response = client.chat.completions.create(
+            model=request.model,
+            messages=messages,
+            temperature=0.7
+        )
+
+        reply = chat_response.choices[0].message.content
+
+        # ✅ Store message in DB
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
             c.execute("INSERT INTO messages (session_id, human, ai, timestamp) VALUES (?, ?, ?, ?)",
-                     (session_id, request.message, ai_response, datetime.now()))
+                     (session_id, request.message, reply, datetime.now()))
             c.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,))
             message_count = c.fetchone()[0]
             conn.commit()
 
+        # ✅ Return response
         return SendMessageResponse(
-            response=ai_response,
+            response=reply,
             session_id=session_id,
             message_count=message_count
         )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/chat/session", response_model=SessionResponse)
 async def get_or_create_session(request: SessionRequest):
