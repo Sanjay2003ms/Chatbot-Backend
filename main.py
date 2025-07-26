@@ -96,7 +96,7 @@ def custom_chatbot_response(prompt: str, history: List[tuple], user_input: str) 
     # A placeholder AI logic (replace with your actual LLM call)
     return f"You said: {user_input}"
 
-@app.get("/")
+@app.get("/", methods=["GET", "HEAD"])
 async def home():
     return {"message": "CHATBOT BACKEND"}
 
