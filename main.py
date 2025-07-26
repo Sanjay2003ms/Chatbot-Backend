@@ -5,6 +5,7 @@ from typing import List, Optional
 import uuid
 from datetime import datetime
 import os
+import uvicorn
 import sqlite3
 
 app = FastAPI(title="Custom Chatbot API", version="1.0.0")
@@ -96,11 +97,11 @@ def custom_chatbot_response(prompt: str, history: List[tuple], user_input: str) 
     # A placeholder AI logic (replace with your actual LLM call)
     return f"You said: {user_input}"
 
-@app.get("/", methods=["GET", "HEAD"])
+@app.api_route("/", methods=["GET", "HEAD"])
 async def home():
     return {"message": "CHATBOT BACKEND"}
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "ok"}
 
@@ -221,5 +222,5 @@ async def get_user_sessions(user_email: str):
     return UserSessionsResponse(sessions=sessions)
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000)) 
+    uvicorn.run(app, host="0.0.0.0", port=port)
